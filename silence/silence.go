@@ -1288,6 +1288,11 @@ func openReplace(filename string) (*replaceFile, error) {
 }
 
 // logging silence status changes.
+//
+// XXX: This rewrites some code present in cli/format/format.go,
+// labelsMatcher() and cli/format/format_extended.go,
+// FormatSilences(). Refactoring this seems a little out of scope for
+// now.
 func (s *Silences) logSilence(msg string, sil *pb.Silence) {
 	var listMatchers []string
 	var matcher_type_operator = map[string]string{
