@@ -141,7 +141,7 @@ func run() int {
 		maintenanceInterval         = kingpin.Flag("data.maintenance-interval", "Interval between garbage collection and snapshotting to disk of the silences and the notification logs.").Default("15m").Duration()
 		maxSilences                 = kingpin.Flag("silences.max-silences", "Maximum number of silences, including expired silences. If negative or zero, no limit is set.").Default("0").Int()
 		maxSilenceSizeBytes         = kingpin.Flag("silences.max-silence-size-bytes", "Maximum silence size in bytes. If negative or zero, no limit is set.").Default("0").Int()
-		silenceLogging              = kingpin.Flag("silences.logging", "Enable logging silences. If it is enabled, the status change of silence will be logged").Bool()
+		silenceLogging              = kingpin.Flag("log.silences", "Enable logging silences. If it is enabled, the status change of silence will be logged").Bool()
 		alertGCInterval             = kingpin.Flag("alerts.gc-interval", "Interval between alert GC.").Default("30m").Duration()
 		dispatchMaintenanceInterval = kingpin.Flag("dispatch.maintenance-interval", "Interval between maintenance of aggregation groups in the dispatcher.").Default("30s").Duration()
 
