@@ -1304,7 +1304,7 @@ func (s *Silences) logSilence(msg string, sil *pb.Silence) {
 	strMatchers := strings.Join(listMatchers, `,`)
 
 	s.logger.Info(
-		"msg", msg,
+		msg,
 		"Id", sil.Id,
 		"CreatedBy", sil.CreatedBy,
 		"Comment", sil.Comment,
