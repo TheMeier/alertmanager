@@ -1060,6 +1060,12 @@ func TestSMTPNoUsernameOrPassword(t *testing.T) {
 	}
 }
 
+func TestSMTPNoTLSAndPlainAuth(t *testing.T) {
+	_, err := LoadFile("testdata/conf.smtp-plain-auth-no-tls.yml")
+	require.Error(t, err)
+	require.Equal(t, "PLAIN SMTP authentication without TLS can only be used with loopback (aka localhost) addresses", err.Error())
+}
+
 func TestGlobalAndLocalSMTPPassword(t *testing.T) {
 	config, err := LoadFile("testdata/conf.smtp-password-global-and-local.yml")
 	if err != nil {

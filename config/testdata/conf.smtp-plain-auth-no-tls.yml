@@ -1,0 +1,14 @@
+global:
+  # IP from TEST-NET-1 block reserved for documentation and examples.
+  smtp_smarthost: '192.0.2.1:25'
+  smtp_from: 'alertmanager@example.org'
+  smtp_auth_username: 'alertmanager'
+  smtp_auth_password: "multiline\nmysecret"
+  smtp_hello: "host.example.org"
+  smtp_require_tls: false
+route:
+  receiver: 'email-notifications'
+receivers:
+  - name: 'email-notifications'
+    email_configs:
+      - to: 'one@example.org'

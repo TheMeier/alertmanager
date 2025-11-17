@@ -451,6 +451,11 @@ func (c *Config) UnmarshalYAML(unmarshal func(any) error) error {
 				ec.RequireTLS = new(bool)
 				*ec.RequireTLS = c.Global.SMTPRequireTLS
 			}
+			if !*ec.RequireTLS && (ec.AuthUsername != "" || ec.AuthPassword != "" || ec.AuthPasswordFile != "") {
+				if ip := net.ParseIP(ec.Smarthost.Host); ip != nil && !ip.IsLoopback() {
+					return errors.New("PLAIN SMTP authentication without TLS can only be used with loopback (aka localhost) addresses")
+				}
+			}
 		}
 		for _, sc := range rcv.SlackConfigs {
 			if sc.HTTPConfig == nil {
