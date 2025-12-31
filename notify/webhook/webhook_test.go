@@ -15,6 +15,7 @@ package webhook
 
 import (
 	"bytes"
+	"context"
 	"fmt"
 	"io"
 	"net/http"
@@ -23,10 +24,12 @@ import (
 	"testing"
 
 	commoncfg "github.com/prometheus/common/config"
+	"github.com/prometheus/common/model"
 	"github.com/prometheus/common/promslog"
 	"github.com/stretchr/testify/require"
 
 	"github.com/prometheus/alertmanager/config"
+	"github.com/prometheus/alertmanager/notify"
 	"github.com/prometheus/alertmanager/notify/test"
 	"github.com/prometheus/alertmanager/types"
 )
@@ -138,4 +141,52 @@ func TestWebhookReadingURLFromFile(t *testing.T) {
 	require.NoError(t, err)
 
 	test.AssertNotifyLeaksNoSecret(ctx, t, notifier, u.String())
+}
+
+type roundTripFunc func(req *http.Request) *http.Response
+
+func (f roundTripFunc) RoundTrip(req *http.Request) (*http.Response, error) {
+	return f(req), nil
+}
+
+func TestWebhookPayload(t *testing.T) {
+	var capturedPayload []byte
+
+	mockTransport := roundTripFunc(func(req *http.Request) *http.Response {
+		var err error
+		capturedPayload, err = io.ReadAll(req.Body)
+		if err != nil {
+			t.Fatal(err)
+		}
+		return &http.Response{
+			StatusCode: http.StatusOK,
+			Body:       http.NoBody,
+		}
+	})
+
+	u, err := url.Parse("http://localhost")
+	require.NoError(t, err)
+
+	conf := &config.WebhookConfig{
+		URL:           &config.SecretURL{URL: u},
+		HTTPConfig:    &commoncfg.HTTPClientConfig{},
+		UseTemplating: true,
+		Template:      `{ "Status": "{{ .Status}}" }`,
+	}
+
+	n, err := New(conf, test.CreateTmpl(t), promslog.NewNopLogger())
+	require.NoError(t, err)
+	n.client.Transport = mockTransport
+
+	alerts := []*types.Alert{{
+		Alert: model.Alert{
+			Labels: model.LabelSet{"alertname": "test"},
+		},
+	}}
+	ctx := notify.WithGroupKey(context.Background(), "test_group_key")
+	_, err = n.Notify(ctx, alerts...)
+	require.NoError(t, err)
+
+	require.NotEmpty(t, capturedPayload)
+	require.JSONEq(t, `{ "Status": "firing" }`, string(capturedPayload))
 }

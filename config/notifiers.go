@@ -641,6 +641,14 @@ type WebhookConfig struct {
 	// Timeout is the maximum time allowed to invoke the webhook. Setting this to 0
 	// does not impose a timeout.
 	Timeout time.Duration `yaml:"timeout" json:"timeout"`
+
+	// UseTemplating allows the use of Go templates in the webhook payload. If true you MUST
+	// also provide a valid template in the `template` field.
+	UseTemplating bool `yaml:"use_templating,omitempty" json:"use_templating,omitempty"`
+
+	// Template is the Go template to use for the webhook payload when `use_templating` is true.
+	// Any template used here MUST always produce a valid JSON string.
+	Template string `yaml:"template,omitempty" json:"template,omitempty"`
 }
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.

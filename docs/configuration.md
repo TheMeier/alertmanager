@@ -1790,6 +1790,15 @@ url_file: <filepath>
 # no timeout should be applied.
 # NOTE: This will have no effect if set higher than the group_interval.
 [ timeout: <duration> | default = 0s ]
+
+# Allow usage of Go templating for payload send to webhook endpoint.
+# In order to use templating, `template` field must be also defined and non-empty.
+# DANGER: Using webhook templating can break your webhook integration.
+#    Templates provided MUST always produce valid JSON output.
+[use_templating : <boolean> | default = false ]
+
+# The template to use for the webhook payload.
+[ template: <tmpl_string> | default = "" ]
 ```
 
 The Alertmanager
@@ -1943,4 +1952,3 @@ room_id: <tmpl_string>
 # The tracing timeout.
 [ timeout: <duration> | default = 0s ]
 ```
-

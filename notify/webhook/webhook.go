@@ -96,8 +96,23 @@ func (n *Notifier) Notify(ctx context.Context, alerts ...*types.Alert) (bool, er
 	}
 
 	var buf bytes.Buffer
-	if err := json.NewEncoder(&buf).Encode(msg); err != nil {
-		return false, err
+
+	if n.conf.UseTemplating && n.conf.Template != "" {
+		var tmplErr error
+		tmpl := notify.TmplText(n.tmpl, data, &tmplErr)
+
+		payload := tmpl(n.conf.Template)
+		if tmplErr != nil {
+			return false, tmplErr
+		}
+		_, err := buf.WriteString(payload)
+		if err != nil {
+			return false, err
+		}
+	} else {
+		if err := json.NewEncoder(&buf).Encode(msg); err != nil {
+			return false, err
+		}
 	}
 
 	var url string
