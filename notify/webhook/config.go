@@ -23,7 +23,7 @@ import (
 )
 
 // defaultWebhookConfig defines default values for Webhook configurations.
-var defaultWebhookConfig = WebhookConfig{
+var defaultWebhookConfig = WebhookDefaultConfig{
 	NotifierConfig: amcommoncfg.NotifierConfig{
 		VSendResolved: true,
 	},
@@ -52,7 +52,7 @@ type WebhookConfig struct {
 
 // UnmarshalYAML implements the yaml.Unmarshaler interface.
 func (c *WebhookConfig) UnmarshalYAML(unmarshal func(any) error) error {
-	*c = defaultWebhookConfig
+	*c = (WebhookConfig)(defaultWebhookConfig)
 	type plain WebhookConfig
 	if err := unmarshal((*plain)(c)); err != nil {
 		return err
@@ -63,5 +63,22 @@ func (c *WebhookConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	if c.URL != "" && c.URLFile != "" {
 		return errors.New("at most one of url & url_file must be configured")
 	}
+	return nil
+}
+
+type WebhookDefaultConfig WebhookConfig
+
+// UnmarshalYAML implements the yaml.Unmarshaler interface for WebhookDefaultConfig.
+// It uses the defaultWebhookConfig as the base configuration and overrides it.
+func (c *WebhookDefaultConfig) UnmarshalYAML(unmarshal func(any) error) error {
+	*c = defaultWebhookConfig
+	type plain WebhookDefaultConfig
+	if err := unmarshal((*plain)(c)); err != nil {
+		return err
+	}
+	if c.URL != "" && c.URLFile != "" {
+		return errors.New("at most one of url & url_file must be configured")
+	}
+	defaultWebhookConfig = *c
 	return nil
 }

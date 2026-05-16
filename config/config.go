@@ -122,8 +122,16 @@ func (s *SecretTemplateURL) UnmarshalJSON(data []byte) error {
 
 // Load parses the YAML input s into a Config.
 func Load(s string) (*Config, error) {
+	// Unmarshal the receiver defaults first to mutate the default configs for the receivers.
+	// The mutated defaults will then be used when unmarshaling the rest of the again in full.
+	rcvDefaults := &ReceiverDefaultConfig{}
+	err := yaml.Unmarshal([]byte(s), rcvDefaults)
+	if err != nil {
+		return nil, fmt.Errorf("error parsing receiver defaults: %w", err)
+	}
+
 	cfg := &Config{}
-	err := yaml.UnmarshalStrict([]byte(s), cfg)
+	err = yaml.UnmarshalStrict([]byte(s), cfg)
 	if err != nil {
 		return nil, err
 	}
@@ -270,13 +278,24 @@ func (ti *TimeInterval) UnmarshalYAML(unmarshal func(any) error) error {
 	return nil
 }
 
+// ReceiverDefaults contains default configuration for receivers.
+type ReceiverDefaults struct {
+	WebhookConfig *webhook.WebhookDefaultConfig `yaml:"webhook,omitempty" json:"webhook,omitempty"`
+}
+
+// ReceiverDefaultConfig is a wrapper around ReceiverDefaults to allow unmarshaling it from the top-level of the config file.
+type ReceiverDefaultConfig struct {
+	ReceiverDefaults *ReceiverDefaults `yaml:"receiver_defaults,omitempty" json:"receiver_defaults,omitempty"`
+}
+
 // Config is the top-level configuration for Alertmanager's config files.
 type Config struct {
-	Global       *GlobalConfig             `yaml:"global,omitempty" json:"global,omitempty"`
-	Route        *Route                    `yaml:"route,omitempty" json:"route,omitempty"`
-	InhibitRules []amcommoncfg.InhibitRule `yaml:"inhibit_rules,omitempty" json:"inhibit_rules,omitempty"`
-	Receivers    []Receiver                `yaml:"receivers,omitempty" json:"receivers,omitempty"`
-	Templates    []string                  `yaml:"templates" json:"templates"`
+	Global           *GlobalConfig             `yaml:"global,omitempty" json:"global,omitempty"`
+	ReceiverDefaults *ReceiverDefaults         `yaml:"receiver_defaults,omitempty" json:"receiver_defaults,omitempty"`
+	Route            *Route                    `yaml:"route,omitempty" json:"route,omitempty"`
+	InhibitRules     []amcommoncfg.InhibitRule `yaml:"inhibit_rules,omitempty" json:"inhibit_rules,omitempty"`
+	Receivers        []Receiver                `yaml:"receivers,omitempty" json:"receivers,omitempty"`
+	Templates        []string                  `yaml:"templates" json:"templates"`
 	// Deprecated. Remove before v1.0 release.
 	MuteTimeIntervals []MuteTimeInterval `yaml:"mute_time_intervals,omitempty" json:"mute_time_intervals,omitempty"`
 	TimeIntervals     []TimeInterval     `yaml:"time_intervals,omitempty" json:"time_intervals,omitempty"`
