@@ -377,6 +377,12 @@ func (c *Config) UnmarshalYAML(unmarshal func(any) error) error {
 
 	names := map[string]struct{}{}
 
+	// globalDefaults carries the fields that individual notifier configs may
+	// inherit. It is built once and passed into each config's MergeGlobalDefaults.
+	globalDefaults := &amcommoncfg.GlobalDefaults{
+		HTTPConfig: c.Global.HTTPConfig,
+	}
+
 	for _, rcv := range c.Receivers {
 		if _, ok := names[rcv.Name]; ok {
 			return fmt.Errorf("notification config name %q is not unique", rcv.Name)
@@ -385,7 +391,9 @@ func (c *Config) UnmarshalYAML(unmarshal func(any) error) error {
 			if wh == nil {
 				return errors.New("missing webhook config")
 			}
-			wh.HTTPConfig = cmp.Or(wh.HTTPConfig, c.Global.HTTPConfig)
+			if err := wh.MergeGlobalDefaults(globalDefaults); err != nil {
+				return err
+			}
 		}
 		for _, ec := range rcv.EmailConfigs {
 			if ec == nil {

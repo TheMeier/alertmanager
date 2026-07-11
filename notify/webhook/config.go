@@ -14,6 +14,7 @@
 package webhook
 
 import (
+	"cmp"
 	"errors"
 	"time"
 
@@ -63,5 +64,12 @@ func (c *WebhookConfig) UnmarshalYAML(unmarshal func(any) error) error {
 	if c.URL != "" && c.URLFile != "" {
 		return errors.New("at most one of url & url_file must be configured")
 	}
+	return nil
+}
+
+// MergeGlobalDefaults implements amcommoncfg.GlobalDefaultsMerger.
+// It inherits HTTPConfig from global when none is set locally.
+func (c *WebhookConfig) MergeGlobalDefaults(g *amcommoncfg.GlobalDefaults) error {
+	c.HTTPConfig = cmp.Or(c.HTTPConfig, g.HTTPConfig)
 	return nil
 }
