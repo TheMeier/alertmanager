@@ -1019,6 +1019,28 @@ func TestDeepCopyWithTemplate(t *testing.T) {
 				"empty":  nil,
 			},
 		},
+		{
+			// Regression for #5012: strings that YAML misparses as maps must be
+			// returnable verbatim via the __string sentinel.
+			title: "string sentinel bypasses YAML parsing",
+			input: map[string]any{StringSentinelKey: `{env="testing"}:{alertname="TestingAlert"}`},
+			fn:    identity,
+			want:  `{env="testing"}:{alertname="TestingAlert"}`,
+		},
+		{
+			title: "string sentinel applies template before returning",
+			input: map[string]any{StringSentinelKey: "hello"},
+			fn:    withSuffix,
+			want:  "hello-templated",
+		},
+		{
+			// A map with __string plus other keys is treated as a normal map,
+			// not as a sentinel.
+			title: "map with __string and extra keys is treated as regular map",
+			input: map[string]any{StringSentinelKey: "hello", "other": "world"},
+			fn:    identity,
+			want:  map[string]any{StringSentinelKey: "hello", "other": "world"},
+		},
 	} {
 		t.Run(tc.title, func(t *testing.T) {
 			got, err := DeepCopyWithTemplate(tc.input, tc.fn)

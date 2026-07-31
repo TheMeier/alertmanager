@@ -622,6 +622,19 @@ func (t *Template) Data(recv string, groupLabels, routeLabels model.LabelSet, no
 
 type TemplateFunc func(string) (string, error)
 
+// StringSentinelKey is the magic key used in a single-entry map to force a
+// value to be treated as a plain string by DeepCopyWithTemplate. A map of
+// the form {"__string": "<value>"} causes the value to be templated and
+// returned verbatim, skipping the YAML-unmarshal step that would otherwise
+// silently convert strings like '{env="x"}:{alertname="y"}' into maps.
+//
+// Example config (jira fields):
+//
+//	fields:
+//	  my_field:
+//	    __string: '{env="testing"}:{alertname="{{ .GroupLabels.alertname }}"}'
+const StringSentinelKey = "__string"
+
 // DeepCopyWithTemplate returns a deep copy of a map/slice/array/string/int/bool or combination thereof, executing the
 // provided template (with the provided data) on all string keys or values. All maps are connverted to
 // map[string]any, with all non-string keys discarded.
@@ -665,6 +678,14 @@ func DeepCopyWithTemplate(value any, tmplTextFunc TemplateFunc) (any, error) {
 
 	case reflect.Map:
 		keys := valueMeta.MapKeys()
+		// Sentinel: {"__string": "..."} forces the result to be a plain string,
+		// skipping YAML re-parsing of the templated value.
+		if len(keys) == 1 {
+			if k, ok := keys[0].Interface().(string); ok && k == StringSentinelKey {
+				raw, _ := valueMeta.MapIndex(keys[0]).Interface().(string)
+				return tmplTextFunc(raw)
+			}
+		}
 		converted := make(map[string]any, len(keys))
 
 		for _, keyMeta := range keys {
