@@ -546,6 +546,7 @@ route:
 type recordStage struct {
 	mtx    sync.RWMutex
 	alerts map[string]map[model.Fingerprint]*alert.Alert
+	calls  int
 }
 
 func (r *recordStage) Alerts() []*alert.Alert {
@@ -560,9 +561,16 @@ func (r *recordStage) Alerts() []*alert.Alert {
 	return alerts
 }
 
+func (r *recordStage) Calls() int {
+	r.mtx.RLock()
+	defer r.mtx.RUnlock()
+	return r.calls
+}
+
 func (r *recordStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*alert.Alert) (context.Context, []*alert.Alert, error) {
 	r.mtx.Lock()
 	defer r.mtx.Unlock()
+	r.calls++
 	gk, ok := notify.GroupKey(ctx)
 	if !ok {
 		panic("GroupKey not present!")
@@ -574,6 +582,48 @@ func (r *recordStage) Exec(ctx context.Context, l *slog.Logger, alerts ...*alert
 		r.alerts[gk][a.Fingerprint()] = a
 	}
 	return ctx, nil, nil
+}
+
+func TestDispatcher_SiblingRoutesShareNflogEntry(t *testing.T) {
+	conf, err := config.Load(`
+receivers:
+- name: test
+route:
+  receiver: test
+  group_wait: 0s
+  group_interval: 1h
+  repeat_interval: 1h
+  routes:
+  - receiver: test
+    matchers:
+    - foo=bar
+    continue: true
+  - receiver: test
+    matchers:
+    - foo=bar
+    continue: true`)
+	require.NoError(t, err)
+
+	logger := promslog.NewNopLogger()
+	reg := prometheus.NewRegistry()
+	alerts, err := mem.NewAlerts(context.Background(), time.Hour, 0, nil, logger, eventrecorder.NopRecorder(), reg, nil)
+	require.NoError(t, err)
+	defer alerts.Close()
+
+	recorder := &recordStage{alerts: make(map[string]map[model.Fingerprint]*alert.Alert)}
+	dispatcher := NewDispatcher(alerts, NewRoute(conf.Route, nil), recorder, marker.NewGroupMarker(), func(d time.Duration) time.Duration { return d }, testMaintenanceInterval, nil, logger, eventrecorder.NopRecorder(), NewDispatcherMetrics(false, reg, nil), nil)
+	go dispatcher.Run(time.Now())
+	defer dispatcher.Stop()
+
+	require.NoError(t, alerts.Put(context.Background(), newAlert(model.LabelSet{"foo": "bar"})))
+	require.Eventually(t, func() bool { return recorder.Calls() == 2 }, time.Second, 10*time.Millisecond)
+	require.Len(t, recorder.Alerts(), 1)
+
+	groups, _, err := dispatcher.Groups(context.Background(), func(*Route) bool { return true }, func(*alert.Alert, time.Time) bool { return true })
+	require.NoError(t, err)
+	require.Len(t, groups, 2)
+	require.Equal(t, groups[0].GroupKey, groups[1].GroupKey)
+	require.Equal(t, "{}/{foo=\"bar\"}:{}", groups[0].GroupKey)
 }
 
 var (
