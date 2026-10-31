@@ -125,3 +125,68 @@ receivers:
 		t.Fatal(err)
 	}
 }
+
+// TestClusterNflogMergeUnevenAlerts reproduces
+// https://github.com/prometheus/alertmanager/issues/5685.
+//
+// All instances know alert1 and alert2, alert3 is only known to the first two
+// instances and alert4 only to the last one. When the last instance notifies
+// for alert4, its nflog entry omits alert3. Being newer, it replaces the
+// entry on its peers, which then see alert3 as new and notify it again.
+func TestClusterNflogMergeUnevenAlerts(t *testing.T) {
+	t.Parallel()
+
+	conf := `
+route:
+  receiver: "default"
+  group_by: []
+  group_wait:      1s
+  group_interval:  1s
+  repeat_interval: 1h
+
+receivers:
+- name: "default"
+  webhook_configs:
+  - url: 'http://%s'
+`
+
+	at := a.NewAcceptanceTest(t, &a.AcceptanceOpts{
+		Tolerance: 2 * time.Second,
+	})
+	co := at.Collector("webhook")
+	wh := a.NewWebhook(t, co)
+
+	amc := at.AlertmanagerCluster(fmt.Sprintf(conf, wh.Address()), 3)
+	ams := amc.Members()
+	last := ams[len(ams)-1]
+
+	amc.Push(a.At(1), a.Alert("alertname", "alert1"), a.Alert("alertname", "alert2"))
+	for _, am := range ams[:len(ams)-1] {
+		am.Push(a.At(4), a.Alert("alertname", "alert3"))
+	}
+	last.Push(a.At(8), a.Alert("alertname", "alert4"))
+
+	co.Want(a.Between(2, 4),
+		a.Alert("alertname", "alert1").Active(1),
+		a.Alert("alertname", "alert2").Active(1),
+	)
+	co.Want(a.Between(4, 7),
+		a.Alert("alertname", "alert1").Active(1),
+		a.Alert("alertname", "alert2").Active(1),
+		a.Alert("alertname", "alert3").Active(4),
+	)
+	co.Want(a.Between(8, 12),
+		a.Alert("alertname", "alert1").Active(1),
+		a.Alert("alertname", "alert2").Active(1),
+		a.Alert("alertname", "alert4").Active(8),
+	)
+	// Keep observing after the last expected notification: nothing else must
+	// arrive, in particular no re-notification of alert3.
+	co.Want(a.Between(12.5, 16))
+
+	// A short peer timeout lets instances at non-zero cluster positions notify
+	// within the test window.
+	at.Run("--cluster.peer-timeout=1s")
+
+	t.Log(co.Check())
+}
