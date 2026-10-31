@@ -468,3 +468,228 @@ func TestStateDecodingError(t *testing.T) {
 	_, err = decodeState(bytes.NewReader(msg))
 	require.Equal(t, ErrInvalidState, err)
 }
+
+// newRetainTestEntry returns an entry for the receiver key "key:a1/integr/1".
+func newRetainTestEntry(ts time.Time, firing, resolved, muted []uint64) *pb.MeshEntry {
+	return &pb.MeshEntry{
+		Entry: &pb.Entry{
+			Timestamp:      timestamppb.New(ts),
+			GroupKey:       []byte("key"),
+			Receiver:       &pb.Receiver{GroupName: "a1", Idx: 1, Integration: "integr"},
+			FiringAlerts:   firing,
+			ResolvedAlerts: resolved,
+			MutedAlerts:    muted,
+		},
+		ExpiresAt: timestamppb.New(ts.Add(time.Hour)),
+	}
+}
+
+func TestRetainFiringAlerts(t *testing.T) {
+	t.Parallel()
+
+	now := time.Now()
+	older := now.Add(-time.Minute)
+	newer := now.Add(time.Minute)
+
+	cases := []struct {
+		name       string
+		prev       *pb.MeshEntry
+		next       *pb.MeshEntry
+		wantFiring []uint64
+	}{
+		{
+			name:       "no previous entry",
+			prev:       nil,
+			next:       newRetainTestEntry(now, []uint64{1, 2}, nil, nil),
+			wantFiring: []uint64{1, 2},
+		},
+		{
+			name:       "previous entry is newer",
+			prev:       newRetainTestEntry(newer, []uint64{1, 2, 3}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{1, 2}, nil, nil),
+			wantFiring: []uint64{1, 2},
+		},
+		{
+			name:       "previous entry has the same timestamp",
+			prev:       newRetainTestEntry(now, []uint64{1, 2, 3}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{1, 2}, nil, nil),
+			wantFiring: []uint64{1, 2},
+		},
+		{
+			name:       "unknown firing alerts are retained",
+			prev:       newRetainTestEntry(older, []uint64{1, 2, 3}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{1, 2, 4}, nil, nil),
+			wantFiring: []uint64{1, 2, 4, 3},
+		},
+		{
+			name:       "alerts already firing are not duplicated",
+			prev:       newRetainTestEntry(older, []uint64{1, 2}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{2, 1, 3}, nil, nil),
+			wantFiring: []uint64{2, 1, 3},
+		},
+		{
+			name:       "resolved alerts are not retained",
+			prev:       newRetainTestEntry(older, []uint64{1, 2, 3}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{1, 2}, []uint64{3}, nil),
+			wantFiring: []uint64{1, 2},
+		},
+		{
+			name:       "muted alerts are not retained",
+			prev:       newRetainTestEntry(older, []uint64{1, 2, 3}, nil, nil),
+			next:       newRetainTestEntry(now, []uint64{1, 2}, nil, []uint64{3}),
+			wantFiring: []uint64{1, 2},
+		},
+		{
+			name:       "all alerts resolved",
+			prev:       newRetainTestEntry(older, []uint64{1, 2}, nil, nil),
+			next:       newRetainTestEntry(now, nil, []uint64{1, 2}, nil),
+			wantFiring: nil,
+		},
+		{
+			name:       "resolved alerts of the previous entry are not retained",
+			prev:       newRetainTestEntry(older, []uint64{1}, []uint64{2}, nil),
+			next:       newRetainTestEntry(now, []uint64{3}, nil, nil),
+			wantFiring: []uint64{3, 1},
+		},
+		{
+			name:       "muted alerts of the previous entry are not retained",
+			prev:       newRetainTestEntry(older, []uint64{1}, nil, []uint64{2}),
+			next:       newRetainTestEntry(now, []uint64{3}, nil, nil),
+			wantFiring: []uint64{3, 1},
+		},
+		{
+			name:       "next entry without any alerts",
+			prev:       newRetainTestEntry(older, []uint64{1, 2}, nil, nil),
+			next:       newRetainTestEntry(now, nil, nil, nil),
+			wantFiring: []uint64{1, 2},
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			var prevBefore *pb.MeshEntry
+			if c.prev != nil {
+				prevBefore = proto.Clone(c.prev).(*pb.MeshEntry)
+			}
+			wantNext := proto.Clone(c.next).(*pb.MeshEntry)
+			wantNext.Entry.FiringAlerts = c.wantFiring
+
+			retainFiringAlerts(c.prev, c.next)
+
+			require.Equal(t, c.wantFiring, c.next.Entry.FiringAlerts)
+			require.True(t, proto.Equal(wantNext, c.next), "only the firing alerts of next must change")
+			if c.prev != nil {
+				require.True(t, proto.Equal(prevBefore, c.prev), "prev must not be modified")
+			}
+		})
+	}
+}
+
+// TestLogMergeRetainFiringAlerts checks Merge with and without the
+// RetainFiringAlerts option, including what is stored and broadcast.
+func TestLogMergeRetainFiringAlerts(t *testing.T) {
+	t.Parallel()
+
+	const key = "key:a1/integr/1"
+	now := time.Now()
+
+	cases := []struct {
+		name          string
+		retain        bool
+		incoming      *pb.MeshEntry
+		wantFiring    []uint64
+		wantBroadcast bool
+	}{
+		{
+			name:          "disabled, newer entry replaces the local one",
+			retain:        false,
+			incoming:      newRetainTestEntry(now, []uint64{1, 2, 4}, nil, nil),
+			wantFiring:    []uint64{1, 2, 4},
+			wantBroadcast: true,
+		},
+		{
+			name:          "enabled, newer entry retains unknown firing alerts",
+			retain:        true,
+			incoming:      newRetainTestEntry(now, []uint64{1, 2, 4}, nil, nil),
+			wantFiring:    []uint64{1, 2, 4, 3},
+			wantBroadcast: true,
+		},
+		{
+			name:          "enabled, newer entry resolving an alert drops it",
+			retain:        true,
+			incoming:      newRetainTestEntry(now, []uint64{1, 2}, []uint64{3}, nil),
+			wantFiring:    []uint64{1, 2},
+			wantBroadcast: true,
+		},
+		{
+			name:          "enabled, older entry is ignored",
+			retain:        true,
+			incoming:      newRetainTestEntry(now.Add(-2*time.Minute), []uint64{1}, nil, nil),
+			wantFiring:    []uint64{1, 2, 3},
+			wantBroadcast: false,
+		},
+	}
+
+	for _, c := range cases {
+		t.Run(c.name, func(t *testing.T) {
+			t.Parallel()
+
+			l, err := New(Options{
+				Retention:          time.Hour,
+				RetainFiringAlerts: c.retain,
+				Metrics:            prometheus.NewRegistry(),
+			})
+			require.NoError(t, err)
+
+			var broadcasts [][]byte
+			l.SetBroadcast(func(b []byte) { broadcasts = append(broadcasts, b) })
+			l.st[key] = newRetainTestEntry(now.Add(-time.Minute), []uint64{1, 2, 3}, nil, nil)
+
+			msg, err := state{key: c.incoming}.MarshalBinary()
+			require.NoError(t, err)
+			sent := bytes.Clone(msg)
+
+			require.NoError(t, l.Merge(msg))
+
+			entries, err := l.Query(QGroupKey("key"), QReceiver(c.incoming.Entry.Receiver))
+			require.NoError(t, err)
+			require.Len(t, entries, 1)
+			require.Equal(t, c.wantFiring, entries[0].FiringAlerts)
+
+			if c.wantBroadcast {
+				// Peers receive the entry as sent and apply retention
+				// against their own state.
+				require.Equal(t, [][]byte{sent}, broadcasts)
+			} else {
+				require.Empty(t, broadcasts)
+			}
+		})
+	}
+}
+
+// TestLogRetainFiringAlertsLocalWrite checks that the local write path stays
+// authoritative: an instance records exactly what it notified, regardless of
+// the RetainFiringAlerts option.
+func TestLogRetainFiringAlertsLocalWrite(t *testing.T) {
+	t.Parallel()
+
+	const key = "key:a1/integr/1"
+
+	l, err := New(Options{
+		Retention:          time.Hour,
+		RetainFiringAlerts: true,
+		Metrics:            prometheus.NewRegistry(),
+	})
+	require.NoError(t, err)
+	l.st[key] = newRetainTestEntry(time.Now().Add(-time.Minute), []uint64{1, 2, 3}, nil, nil)
+
+	recv := &pb.Receiver{GroupName: "a1", Idx: 1, Integration: "integr"}
+	require.NoError(t, l.Log(recv, "key", []uint64{1, 2}, nil, nil, nil, time.Hour))
+
+	entries, err := l.Query(QGroupKey("key"), QReceiver(recv))
+	require.NoError(t, err)
+	require.Len(t, entries, 1)
+	require.Equal(t, []uint64{1, 2}, entries[0].FiringAlerts)
+}

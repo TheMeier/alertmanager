@@ -177,6 +177,10 @@ type Log struct {
 	metrics   *metrics
 	retention time.Duration
 
+	// retainFiringAlerts enables retainFiringAlerts for entries received
+	// from the cluster.
+	retainFiringAlerts bool
+
 	// For now we only store the most recently added log entry.
 	// The key is a serialized concatenation of group key and receiver.
 	mtx       sync.RWMutex
@@ -273,6 +277,36 @@ func (s state) merge(e *pb.MeshEntry, now time.Time) bool {
 	return false
 }
 
+// retainFiringAlerts appends to the firing alerts of next those firing alerts
+// of prev that next lists as neither firing, resolved nor muted. These are the
+// alerts the sender of next did not know about, so dropping them would make
+// this instance consider them new and notify them again.
+// Nothing is retained if prev is nil or next would not replace prev.
+// The entry next is modified in place.
+func retainFiringAlerts(prev, next *pb.MeshEntry) {
+	if prev == nil || !prev.Entry.Timestamp.AsTime().Before(next.Entry.Timestamp.AsTime()) {
+		return
+	}
+
+	known := make(map[uint64]struct{}, len(next.Entry.FiringAlerts)+len(next.Entry.ResolvedAlerts)+len(next.Entry.MutedAlerts))
+	for _, id := range next.Entry.FiringAlerts {
+		known[id] = struct{}{}
+	}
+	for _, id := range next.Entry.ResolvedAlerts {
+		known[id] = struct{}{}
+	}
+	for _, id := range next.Entry.MutedAlerts {
+		known[id] = struct{}{}
+	}
+
+	for _, id := range prev.Entry.FiringAlerts {
+		if _, ok := known[id]; !ok {
+			next.Entry.FiringAlerts = append(next.Entry.FiringAlerts, id)
+			known[id] = struct{}{}
+		}
+	}
+}
+
 func (s state) MarshalBinary() ([]byte, error) {
 	var buf bytes.Buffer
 
@@ -320,6 +354,11 @@ type Options struct {
 
 	Retention time.Duration
 
+	// RetainFiringAlerts keeps the firing alerts of an existing entry that a
+	// newer entry received from the cluster lists as neither firing, resolved
+	// nor muted.
+	RetainFiringAlerts bool
+
 	Logger  *slog.Logger
 	Metrics prometheus.Registerer
 }
@@ -344,11 +383,12 @@ func New(o Options) (*Log, error) {
 	}
 
 	l := &Log{
-		retention: o.Retention,
-		logger:    promslog.NewNopLogger(),
-		st:        state{},
-		broadcast: func([]byte) {},
-		metrics:   newMetrics(o.Metrics),
+		retention:          o.Retention,
+		retainFiringAlerts: o.RetainFiringAlerts,
+		logger:             promslog.NewNopLogger(),
+		st:                 state{},
+		broadcast:          func([]byte) {},
+		metrics:            newMetrics(o.Metrics),
 	}
 
 	if o.Logger != nil {
@@ -617,7 +657,12 @@ func (l *Log) Merge(b []byte) error {
 	defer l.mtx.Unlock()
 	now := l.now()
 
-	for _, e := range st {
+	for k, e := range st {
+		// Entries decoded from b are not shared and b itself is what gets
+		// broadcast, so e can be modified in place.
+		if l.retainFiringAlerts {
+			retainFiringAlerts(l.st[k], e)
+		}
 		if merged := l.st.merge(e, now); merged && !cluster.OversizedMessage(b) {
 			// If this is the first we've seen the message and it's
 			// not oversized, gossip it to other nodes. We don't

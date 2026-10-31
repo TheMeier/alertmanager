@@ -19,6 +19,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/prometheus/alertmanager/featurecontrol"
 	a "github.com/prometheus/alertmanager/test/with_api_v2"
 )
 
@@ -126,13 +127,15 @@ receivers:
 	}
 }
 
-// TestClusterNflogMergeUnevenAlerts reproduces
+// TestClusterNflogMergeUnevenAlerts covers
 // https://github.com/prometheus/alertmanager/issues/5685.
 //
 // All instances know alert1 and alert2, alert3 is only known to the first two
 // instances and alert4 only to the last one. When the last instance notifies
-// for alert4, its nflog entry omits alert3. Being newer, it replaces the
-// entry on its peers, which then see alert3 as new and notify it again.
+// for alert4, its nflog entry omits alert3. Without the
+// retain-firing-alerts-on-merge feature, that newer entry replaces the entry
+// on its peers, which then see alert3 as new and notify it again, endlessly.
+// With the feature, the peers keep alert3 and no duplicates are sent.
 func TestClusterNflogMergeUnevenAlerts(t *testing.T) {
 	t.Parallel()
 
@@ -151,7 +154,8 @@ receivers:
 `
 
 	at := a.NewAcceptanceTest(t, &a.AcceptanceOpts{
-		Tolerance: 2 * time.Second,
+		Tolerance:    2 * time.Second,
+		FeatureFlags: []string{featurecontrol.FeatureRetainFiringAlertsOnMerge},
 	})
 	co := at.Collector("webhook")
 	wh := a.NewWebhook(t, co)

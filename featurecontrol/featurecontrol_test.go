@@ -69,3 +69,16 @@ func TestMutedAlertsInNflog(t *testing.T) {
 
 	require.False(t, NoopFlags{}.EnableMutedAlertsInNflog())
 }
+
+func TestRetainFiringAlertsOnMerge(t *testing.T) {
+	fc, err := NewFlags(promslog.NewNopLogger(), FeatureRetainFiringAlertsOnMerge)
+	require.NoError(t, err)
+	require.True(t, fc.EnableRetainFiringAlertsOnMerge())
+
+	// The feature is off unless it is asked for.
+	fc, err = NewFlags(promslog.NewNopLogger(), FeatureMutedAlertsInNflog)
+	require.NoError(t, err)
+	require.False(t, fc.EnableRetainFiringAlertsOnMerge())
+
+	require.False(t, NoopFlags{}.EnableRetainFiringAlertsOnMerge())
+}

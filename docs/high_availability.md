@@ -466,6 +466,13 @@ Duplicate notifications can occur due to:
 2. **Gossip not settled** - Check `--cluster.settle-timeout`
 3. **Clock skew** - Ensure NTP is configured on all instances
 4. **Notification log not replicating** - Check gossip metrics
+5. **Instances receiving different alerts** - If an instance does not receive
+   all alerts of a group (e.g. a Prometheus server failed to send to it), its
+   notification log entries omit them. Once gossiped, these newer entries
+   replace the more complete ones on its peers, which then notify those alerts
+   again. The experimental `--enable-feature=retain-firing-alerts-on-merge`
+   flag makes peers keep firing alerts that a gossiped entry lists as neither
+   firing, resolved nor muted.
 
 Enable debug logging:
 
